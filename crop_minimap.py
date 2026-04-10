@@ -5,53 +5,41 @@ import cv2
 import numpy as np
 
 
-def find_minimap(image):
+def find_game_area(image):
     """
-    Trouve la minimap en détectant la grande zone noire (fog of war)
-    dans le quadrant bas-droit de l'écran.
+    Trouve les bords du contenu jeu en détectant
+    là où commence le fond gris macOS/OS.
     """
     h, w = image.shape[:2]
 
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    def is_os_background(px):
+        b, g, r = int(px[0]), int(px[1]), int(px[2])
+        return (abs(b - g) < 15 and abs(g - r) < 15 and 30 < b < 80)
 
-    # Pixels très sombres = intérieur de la minimap (fog of war)
-    _, dark = cv2.threshold(gray, 25, 255, cv2.THRESH_BINARY_INV)
+    # Bord droit : première colonne majoritairement grise (fond OS)
+    game_right = w
+    for x in range(w - 1, int(w * 0.5), -1):
+        col = image[:, x]
+        if sum(1 for px in col if is_os_background(px)) > h * 0.3:
+            game_right = x + 1
+            break
 
-    # Restreindre au quadrant bas-droit (la minimap est toujours là)
-    mask = np.zeros_like(dark)
-    mask[int(h * 0.25):, int(w * 0.25):] = 255
-    dark = cv2.bitwise_and(dark, mask)
+    # Bord bas : première rangée majoritairement grise
+    game_bottom = h
+    for y in range(h - 1, int(h * 0.5), -1):
+        row = image[y, :]
+        if sum(1 for px in row if is_os_background(px)) > w * 0.3:
+            game_bottom = y + 1
+            break
 
-    # Remplir les trous (champions, icônes, etc.)
-    k = np.ones((15, 15), np.uint8)
-    dark = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, k, iterations=3)
-
-    contours, _ = cv2.findContours(dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return None
-
-    # Trier par aire décroissante, prendre le plus grand contour quasi-carré
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)
-    for cnt in contours[:5]:
-        x, y, cw, ch = cv2.boundingRect(cnt)
-        ratio = cw / ch if ch > 0 else 0
-        if 0.65 < ratio < 1.45 and cw > w * 0.08:
-            # Ajouter la bordure (quelques pixels autour)
-            pad = int(w * 0.005)
-            x = max(0, x - pad)
-            y = max(0, y - pad)
-            cw = min(w - x, cw + 2 * pad)
-            ch = min(h - y, ch + 2 * pad)
-            return x, y, cw, ch
-
-    return None
+    return game_right, game_bottom
 
 
 def main():
     parser = argparse.ArgumentParser(description="Crop the LoL minimap from a BMP screenshot.")
     parser.add_argument("--input",  required=True,         help="Path to input BMP")
     parser.add_argument("--output", default="minimap.bmp", help="Path to output BMP")
-    parser.add_argument("--debug",  action="store_true",   help="Save debug overlay image")
+    parser.add_argument("--debug",  action="store_true",   help="Save debug overlay")
     args = parser.parse_args()
 
     if not os.path.exists(args.input):
@@ -66,22 +54,25 @@ def main():
     h, w = image.shape[:2]
     print(f"Image: {w}x{h}")
 
-    result = find_minimap(image)
+    game_right, game_bottom = find_game_area(image)
+    print(f"Game area: {game_right}x{game_bottom}")
 
-    if result:
-        x, y, cw, ch = result
-        print(f"Minimap found: ({x},{y}) → ({x+cw},{y+ch}), size {cw}x{ch}")
-        cropped = image[y:y+ch, x:x+cw]
-    else:
-        print("ERREUR: minimap non détectée.")
-        sys.exit(1)
+    # La minimap occupe ~26.5% de la largeur et ~36% de la hauteur du jeu,
+    # toujours ancrée au coin bas-droit
+    map_w = int(game_right * 0.265)
+    map_h = int(game_bottom * 0.36)
+    x1 = game_right - map_w
+    y1 = game_bottom - map_h
 
+    print(f"Minimap: ({x1},{y1}) → ({game_right},{game_bottom})")
+
+    cropped = image[y1:game_bottom, x1:game_right]
     cv2.imwrite(args.output, cropped)
     print(f"Saved: {args.output}")
 
     if args.debug:
         dbg = image.copy()
-        cv2.rectangle(dbg, (x, y), (x+cw, y+ch), (0, 255, 0), 4)
+        cv2.rectangle(dbg, (x1, y1), (game_right, game_bottom), (0, 255, 0), 4)
         cv2.imwrite("debug_detected_minimap.bmp", dbg)
         print("Debug saved: debug_detected_minimap.bmp")
 
