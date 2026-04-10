@@ -22,8 +22,8 @@ def main():
     h, w = image.shape[:2]
     size = int(min(w, h) * 0.21)
 
-    x1 = w - size - 50
-    y1 = h - size - 40
+    x1 = w - size - 90
+    y1 = h - size - 80
 
     cropped = image[y1:h, x1:w]
     cv2.imwrite(args.output, cropped)
