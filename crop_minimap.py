@@ -4,11 +4,12 @@ import sys
 import cv2
 
 
-# Fractions calibrées sur 1920x1080 (scale proportionnellement)
-MINIMAP_LEFT   = 0.6526
-MINIMAP_TOP    = 0.5889
-MINIMAP_RIGHT  = 0.7583
-MINIMAP_BOTTOM = 0.7741
+# Calibré sur 1920x1080 depuis les vrais BMP de jeu
+# Minimap toujours ancrée en bas à droite
+MINIMAP_LEFT   = 0.8729   # x=1676/1920
+MINIMAP_TOP    = 0.5620   # y=607/1080
+MINIMAP_RIGHT  = 0.9995   # x=1919/1920
+MINIMAP_BOTTOM = 0.7630   # y=824/1080
 
 
 def crop_minimap(image):
