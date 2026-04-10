@@ -12,12 +12,18 @@ def crop_minimap_fixed(image):
     """
     h, w = image.shape[:2]
 
-    # Ratios tuned for a standard LoL HUD screenshot
-    crop_w = int(w * 0.22)
-    crop_h = int(h * 0.30)
+    # Tighter crop tuned from your current result
+    crop_w = int(w * 0.18)
+    crop_h = int(h * 0.24)
 
-    x = w - crop_w
-    y = h - crop_h
+    x = int(w * 0.79)
+    y = int(h * 0.67)
+
+    # Safety clamp
+    if x + crop_w > w:
+        crop_w = w - x
+    if y + crop_h > h:
+        crop_h = h - y
 
     return x, y, crop_w, crop_h
 
