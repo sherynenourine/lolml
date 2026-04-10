@@ -5,67 +5,91 @@ import cv2
 import numpy as np
 
 
-def find_minimap_rect(image):
+def find_minimap_by_border_colors(image, debug=False):
     """
-    Cherche le grand rectangle de la minimap dans le quart bas-droit de l'écran.
-    La minimap LoL est toujours le plus grand rectangle dans cette zone.
+    Détecte la bordure de la minimap via ses couleurs caractéristiques :
+    - Bande marron/or  (BGR ~  40, 85, 122)
+    - Bande vert foncé (BGR ~ 55, 65,  25)
     """
     h, w = image.shape[:2]
 
-    # On cherche uniquement dans le quart bas-droit
-    sx = int(w * 0.65)
-    sy = int(h * 0.55)
-    roi = image[sy:h, sx:w]
+    # ── Masque couleur marron/or de la bordure ──────────────────────────
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(gray, 30, 100)
+    # Marron-or : H 15-35, S 80-220, V 60-170
+    mask_brown = cv2.inRange(hsv,
+                             np.array([15,  80,  60]),
+                             np.array([35, 220, 170]))
 
-    kernel = np.ones((3, 3), np.uint8)
-    edges = cv2.dilate(edges, kernel, iterations=2)
+    # Vert-bleu foncé de la bordure : H 85-105, S 60-200, V 30-100
+    mask_teal = cv2.inRange(hsv,
+                            np.array([85,  60,  30]),
+                            np.array([105, 200, 100]))
 
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Combinaison des deux bandes
+    mask = cv2.bitwise_or(mask_brown, mask_teal)
 
-    best = None
-    best_area = 0
+    # Garder uniquement le quart bas-droit (la minimap est toujours là)
+    region_mask = np.zeros_like(mask)
+    region_mask[int(h * 0.5):, int(w * 0.55):] = 255
+    mask = cv2.bitwise_and(mask, region_mask)
 
-    for cnt in contours:
-        area = cv2.contourArea(cnt)
-        if area < 10000:
-            continue
+    # Nettoyage morphologique
+    kernel = np.ones((5, 5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=3)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  kernel, iterations=2)
 
-        # Approximer en polygone
-        peri = cv2.arcLength(cnt, True)
-        approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
+    if debug:
+        cv2.imwrite("debug_mask.bmp", mask)
 
-        x, y, cw, ch = cv2.boundingRect(cnt)
-        ratio = cw / ch if ch > 0 else 0
+    # ── Trouver le bord DROIT de la bordure ─────────────────────────────
+    # Projection horizontale : colonne la plus à droite avec pixels allumés
+    col_sums = np.sum(mask, axis=0)
+    right_cols = np.where(col_sums > 50)[0]
+    if len(right_cols) == 0:
+        return None
+    right_x = int(right_cols.max())
 
-        # La minimap est quasi-carrée et grande
-        if 0.75 < ratio < 1.25 and area > best_area:
-            best_area = area
-            best = (x + sx, y + sy, cw, ch)
+    # ── Trouver le bord BAS de la bordure ───────────────────────────────
+    row_sums = np.sum(mask, axis=1)
+    bottom_rows = np.where(row_sums > 50)[0]
+    if len(bottom_rows) == 0:
+        return None
+    bottom_y = int(bottom_rows.max())
 
-    return best
+    # ── Trouver le bord GAUCHE et HAUT ──────────────────────────────────
+    left_cols = np.where(col_sums > 50)[0]
+    left_x = int(left_cols.min())
+
+    top_rows = np.where(row_sums > 50)[0]
+    top_y = int(top_rows.min())
+
+    map_w = right_x - left_x
+    map_h = bottom_y - top_y
+
+    # Forcer un carré (on prend le min des deux dimensions)
+    size = min(map_w, map_h)
+
+    # Réancrer : on part du coin bas-droit détecté
+    x = right_x - size
+    y = bottom_y - size
+
+    return max(0, x), max(0, y), size, size
 
 
 def crop_minimap_fallback(image):
-    """
-    Fallback ancré au coin bas-droit, taille minimap seule.
-    """
     h, w = image.shape[:2]
-    # ~20% largeur pour la zone UI totale, mais la carte = ~77% de cette zone
-    ui_w = int(w * 0.205)
-    map_size = int(ui_w * 0.92)
-    x = w - map_size - int(w * 0.003)
-    y = h - map_size - int(h * 0.015)
-    return max(0, x), max(0, y), map_size, map_size
+    size = int(w * 0.155)
+    x = w - size - int(w * 0.003)
+    y = h - size - int(h * 0.015)
+    return max(0, x), max(0, y), size, size
 
 
 def main():
     parser = argparse.ArgumentParser(description="Crop the LoL minimap from a BMP screenshot.")
-    parser.add_argument("--input", required=True, help="Path to input BMP image")
-    parser.add_argument("--output", default="minimap.bmp", help="Path to output BMP image")
-    parser.add_argument("--debug", action="store_true", help="Save a debug image with crop box")
+    parser.add_argument("--input",  required=True,          help="Path to input BMP")
+    parser.add_argument("--output", default="minimap.bmp",  help="Path to output BMP")
+    parser.add_argument("--debug",  action="store_true",    help="Save debug images")
     args = parser.parse_args()
 
     if not os.path.exists(args.input):
@@ -77,30 +101,25 @@ def main():
         print(f"Could not read image: {args.input}")
         sys.exit(1)
 
-    result = find_minimap_rect(image)
+    result = find_minimap_by_border_colors(image, debug=args.debug)
 
     if result is not None:
-        x, y, cw, ch = result
-        # Forcer un carré (prendre le plus petit côté)
-        size = min(cw, ch)
-        # Réancrer au coin bas-droit du rect trouvé
-        x = x + cw - size
-        y = y + ch - size
-        print(f"Detected minimap: x={x}, y={y}, size={size}")
+        x, y, size, _ = result
+        print(f"Border detected → x={x}, y={y}, size={size}")
     else:
-        print("Detection failed → fallback")
+        print("Detection failed → fallback (coin bas-droit)")
         x, y, size, _ = crop_minimap_fallback(image)
-        print(f"Fallback: x={x}, y={y}, size={size}")
+        print(f"Fallback → x={x}, y={y}, size={size}")
 
     cropped = image[y:y + size, x:x + size]
     cv2.imwrite(args.output, cropped)
-    print(f"Saved to: {args.output}")
+    print(f"Saved: {args.output}")
 
     if args.debug:
-        debug_img = image.copy()
-        cv2.rectangle(debug_img, (x, y), (x + size, y + size), (0, 255, 0), 3)
-        cv2.imwrite("debug_detected_minimap.bmp", debug_img)
-        print("Debug saved to: debug_detected_minimap.bmp")
+        dbg = image.copy()
+        cv2.rectangle(dbg, (x, y), (x + size, y + size), (0, 255, 0), 3)
+        cv2.imwrite("debug_detected_minimap.bmp", dbg)
+        print("Debug overlay saved: debug_detected_minimap.bmp")
 
 
 if __name__ == "__main__":
