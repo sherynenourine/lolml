@@ -5,27 +5,30 @@ import cv2
 
 def crop_minimap_fixed(image):
     """
-    Fixed crop of the bottom-right minimap area.
-    Returns (x, y, w, h).
+    Crop depuis le coin bas-droit, là où la minimap LoL est toujours ancrée.
     """
     h, w = image.shape[:2]
 
-    # La minimap LoL est dans le coin bas-droite, SOUS les portraits champions
-    crop_w = int(w * 0.185)
-    crop_h = int(h * 0.185)
-    x = int(w * 0.797)
-    y = int(h * 0.765)  # Était 0.67 → trop haut, capturait les portraits
+    # La minimap est carrée, ~20% de la largeur écran
+    map_size = int(w * 0.205)
+
+    # Ancrage bas-droit avec petite marge
+    x = w - map_size - int(w * 0.002)
+    y = h - map_size - int(h * 0.018)
 
     # Safety clamp
-    if x + crop_w > w:
-        crop_w = w - x
-    if y + crop_h > h:
-        crop_h = h - y
+    x = max(0, x)
+    y = max(0, y)
+    if x + map_size > w:
+        map_size = w - x
+    if y + map_size > h:
+        map_size = h - y
 
-    return x, y, crop_w, crop_h
+    return x, y, map_size, map_size
+
 
 def main():
-    parser = argparse.ArgumentParser(description="Crop the LoL minimap area from a BMP screenshot.")
+    parser = argparse.ArgumentParser(description="Crop the LoL minimap from a BMP screenshot.")
     parser.add_argument("--input", required=True, help="Path to input BMP image")
     parser.add_argument("--output", default="minimap.bmp", help="Path to output BMP image")
     parser.add_argument("--debug", action="store_true", help="Save a debug image with crop box")
@@ -41,6 +44,9 @@ def main():
         sys.exit(1)
 
     x, y, w, h = crop_minimap_fixed(image)
+    print(f"Image size: {image.shape[1]}x{image.shape[0]}")
+    print(f"Crop region: x={x}, y={y}, w={w}, h={h}")
+
     cropped = image[y:y + h, x:x + w]
 
     success = cv2.imwrite(args.output, cropped)
@@ -48,14 +54,13 @@ def main():
         print(f"Could not save output image: {args.output}")
         sys.exit(1)
 
-    print(f"Minimap cropped to: {args.output} (region: x={x}, y={y}, w={w}, h={h})")
+    print(f"Minimap saved to: {args.output}")
 
     if args.debug:
         debug_img = image.copy()
         cv2.rectangle(debug_img, (x, y), (x + w, y + h), (0, 255, 0), 3)
-        debug_path = "debug_detected_minimap.bmp"
-        cv2.imwrite(debug_path, debug_img)
-        print(f"Debug image saved to: {debug_path}")
+        cv2.imwrite("debug_detected_minimap.bmp", debug_img)
+        print("Debug image saved to: debug_detected_minimap.bmp")
 
 if __name__ == "__main__":
     main()
