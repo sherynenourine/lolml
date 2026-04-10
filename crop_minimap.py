@@ -11,8 +11,8 @@ def crop_minimap_fixed(image):
     """
     h, w = image.shape[:2]
     size = int(min(w, h) * 0.21)
-    x = w - size - 90
-    y = h - size - 80
+    x = w - size - 50
+    y = h - size - 50
     crop_w = w - x
     crop_h = h - y
     return x, y, crop_w, crop_h
