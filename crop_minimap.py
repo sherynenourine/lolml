@@ -3,7 +3,6 @@ import os
 import sys
 
 import cv2
-import numpy as np
 
 
 def detect_minimap_panel(image):
@@ -50,69 +49,27 @@ def detect_minimap_panel(image):
 
 def refine_map_only(panel_img):
     """
-    Inside the minimap panel, detect the actual map content only.
+    Crop only the inner minimap area from the detected minimap HUD block.
+    Uses fixed relative margins inside the panel for better stability.
     Returns (x, y, w, h) relative to panel_img.
     """
     ph, pw = panel_img.shape[:2]
 
-    # Ignore the top band with champion portraits / HUD
-    top_cut = int(ph * 0.18)
-    search = panel_img[top_cut:ph, 0:pw]
+    left = int(pw * 0.11)
+    right = int(pw * 0.11)
+    top = int(ph * 0.20)
+    bottom = int(ph * 0.10)
 
-    hsv = cv2.cvtColor(search, cv2.COLOR_BGR2HSV)
+    x = left
+    y = top
+    w = pw - left - right
+    h = ph - top - bottom
 
-    # Keep pixels that are not too dark and somewhat saturated:
-    # useful to keep the map interior and reject black frame/background
-    mask = cv2.inRange(hsv, (0, 25, 25), (180, 255, 255))
+    size = min(w, h)
+    x = x + (w - size) // 2
+    y = y + (h - size) // 2
 
-    # Morphological cleanup
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
-
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    best_box = None
-    best_score = -1
-
-    for cnt in contours:
-        x, y, w, h = cv2.boundingRect(cnt)
-        area = w * h
-        if area < 5000:
-            continue
-
-        ratio = w / float(h)
-        if not (0.80 <= ratio <= 1.20):
-            continue
-
-        # Prefer large square-ish zones located in the lower-middle part
-        cx = x + w / 2
-        cy = y + h / 2
-        center_bias = 1.0 - abs((cx / pw) - 0.5) * 0.5
-
-        score = area * center_bias
-        if score > best_score:
-            best_score = score
-            best_box = (x, y + top_cut, w, h)
-
-    if best_box is None:
-        raise RuntimeError("Map interior not found.")
-
-    x, y, w, h = best_box
-
-    # Small inward margin to remove the decorative border
-    mx = max(3, int(w * 0.03))
-    my = max(3, int(h * 0.03))
-
-    x += mx
-    y += my
-    w -= 2 * mx
-    h -= 2 * my
-
-    if w <= 0 or h <= 0:
-        raise RuntimeError("Refined crop is invalid.")
-
-    return x, y, w, h
+    return x, y, size, size
 
 
 def main():
