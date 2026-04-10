@@ -5,68 +5,46 @@ import cv2
 import numpy as np
 
 
-def is_teal_frame(px):
-    """
-    Détecte la couleur du cadre teal/vert-foncé de la minimap LoL.
-    BGR ~(42, 55, 53) — tous les canaux proches, sombres, légèrement verts.
-    """
-    b, g, r = int(px[0]), int(px[1]), int(px[2])
-    return (30 < b < 80 and 40 < g < 80 and 30 < r < 80
-            and abs(b - g) < 25 and abs(g - r) < 25)
-
-
 def find_minimap(image):
+    """
+    Trouve la minimap en détectant la grande zone noire (fog of war)
+    dans le quadrant bas-droit de l'écran.
+    """
     h, w = image.shape[:2]
 
-    # ── Zone de recherche : moitié droite + moitié basse ──────────────
-    sx = int(w * 0.55)
-    sy = int(h * 0.40)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-    # ── LEFT : première colonne avec beaucoup de pixels teal ──────────
-    left_x = None
-    for x in range(sx, int(w * 0.85)):
-        col = image[sy:h, x]
-        if sum(1 for px in col if is_teal_frame(px)) > int((h - sy) * 0.25):
-            left_x = x
-            break
+    # Pixels très sombres = intérieur de la minimap (fog of war)
+    _, dark = cv2.threshold(gray, 25, 255, cv2.THRESH_BINARY_INV)
 
-    # ── RIGHT : dernière colonne avec beaucoup de pixels teal ─────────
-    right_x = None
-    for x in range(w - 1, sx, -1):
-        col = image[sy:h, x]
-        if sum(1 for px in col if is_teal_frame(px)) > int((h - sy) * 0.25):
-            right_x = x
-            break
+    # Restreindre au quadrant bas-droit (la minimap est toujours là)
+    mask = np.zeros_like(dark)
+    mask[int(h * 0.25):, int(w * 0.25):] = 255
+    dark = cv2.bitwise_and(dark, mask)
 
-    if left_x is None or right_x is None:
+    # Remplir les trous (champions, icônes, etc.)
+    k = np.ones((15, 15), np.uint8)
+    dark = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, k, iterations=3)
+
+    contours, _ = cv2.findContours(dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
         return None
 
-    map_width = right_x - left_x
+    # Trier par aire décroissante, prendre le plus grand contour quasi-carré
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)
+    for cnt in contours[:5]:
+        x, y, cw, ch = cv2.boundingRect(cnt)
+        ratio = cw / ch if ch > 0 else 0
+        if 0.65 < ratio < 1.45 and cw > w * 0.08:
+            # Ajouter la bordure (quelques pixels autour)
+            pad = int(w * 0.005)
+            x = max(0, x - pad)
+            y = max(0, y - pad)
+            cw = min(w - x, cw + 2 * pad)
+            ch = min(h - y, ch + 2 * pad)
+            return x, y, cw, ch
 
-    # ── TOP : première ligne avec beaucoup de pixels teal ─────────────
-    top_y = None
-    for y in range(sy, int(h * 0.85)):
-        row = image[y, left_x:right_x]
-        if sum(1 for px in row if is_teal_frame(px)) > map_width * 0.55:
-            top_y = y
-            break
-
-    if top_y is None:
-        return None
-
-    # La minimap est quasi-carrée → bottom = top + largeur
-    bottom_y = min(top_y + map_width, h - 5)
-
-    return left_x, top_y, right_x, bottom_y
-
-
-def crop_minimap_fallback(image):
-    """Fallback ancré bas-droit si la détection échoue."""
-    h, w = image.shape[:2]
-    size = int(w * 0.195)
-    x = w - size - 5
-    y = h - size - 5
-    return max(0, x), max(0, y), w - 5, h - 5
+    return None
 
 
 def main():
@@ -91,19 +69,19 @@ def main():
     result = find_minimap(image)
 
     if result:
-        left_x, top_y, right_x, bottom_y = result
-        print(f"Minimap detected: ({left_x},{top_y}) → ({right_x},{bottom_y})")
+        x, y, cw, ch = result
+        print(f"Minimap found: ({x},{y}) → ({x+cw},{y+ch}), size {cw}x{ch}")
+        cropped = image[y:y+ch, x:x+cw]
     else:
-        print("Detection failed → fallback")
-        left_x, top_y, right_x, bottom_y = crop_minimap_fallback(image)
+        print("ERREUR: minimap non détectée.")
+        sys.exit(1)
 
-    cropped = image[top_y:bottom_y, left_x:right_x]
     cv2.imwrite(args.output, cropped)
     print(f"Saved: {args.output}")
 
     if args.debug:
         dbg = image.copy()
-        cv2.rectangle(dbg, (left_x, top_y), (right_x, bottom_y), (0, 255, 0), 4)
+        cv2.rectangle(dbg, (x, y), (x+cw, y+ch), (0, 255, 0), 4)
         cv2.imwrite("debug_detected_minimap.bmp", dbg)
         print("Debug saved: debug_detected_minimap.bmp")
 
